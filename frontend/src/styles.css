@@ -330,3 +330,19 @@ code { font-family: "SFMono-Regular", Consolas, monospace; }
   .signal-board { gap: 6px; }
   .login-panel { padding: 28px 20px; }
 }
+
+/* Recipe publish gate */
+.gate-inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.gate-inline .el-alert__content { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.gate-inline span { display: inline-flex; align-items: center; gap: 5px; }
+.gate-content { display: grid; gap: 14px; }
+.gate-banner { margin: 0; }
+.gate-section h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; color: #35453c; font-size: .74rem; }
+.gate-versions { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.gate-versions li { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; background: #f3f7f4; border: 1px solid var(--line); border-radius: 6px; font-size: .72rem; }
+.gate-blockers { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.gate-blockers li { padding: 9px 11px; background: #fcf8f1; border: 1px solid #e7d8bf; border-radius: 6px; }
+.blocker-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.blocker-head strong { font-size: .72rem; color: #4a3b22; }
+.blocker-reason { margin: 5px 0 3px; color: #7a5f33; font-size: .67rem; line-height: 1.45; }
+.blocker-meta { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; color: var(--muted); font-size: .62rem; }

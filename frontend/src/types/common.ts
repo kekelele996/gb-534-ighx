@@ -8,6 +8,7 @@ export interface ApiEnvelope<T> {
 export interface ApiErrorBody {
   code?: string
   message?: string
+  details?: unknown
   request_id?: string
 }
 

@@ -1,13 +1,15 @@
 package repository
+
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
 	"fermentation-kinetics-deviation-analysis/backend/internal/dto"
 	"fermentation-kinetics-deviation-analysis/backend/internal/model"
+	"fmt"
 	"gorm.io/gorm"
+	"strings"
+	"time"
 )
+
 type CultureRecipeRepository interface {
 	Create(context.Context, *model.CultureRecipe) error
 	GetByID(context.Context, uint, bool) (model.CultureRecipe, error)
@@ -15,8 +17,11 @@ type CultureRecipeRepository interface {
 	UpdateWithVersion(context.Context, *model.CultureRecipe, int) (bool, error)
 	Transition(context.Context, uint, string, string, int, time.Time) (bool, error)
 	MaxVersion(context.Context, uint, string) (int, error)
+	ListPublishedInGroup(context.Context, uint, string, uint) ([]model.CultureRecipe, error)
+	BulkObsolete(context.Context, []uint, time.Time) (int64, error)
 }
 type cultureRecipeRepository struct{ db *gorm.DB }
+
 func NewCultureRecipeRepository(db *gorm.DB) CultureRecipeRepository {
 	return &cultureRecipeRepository{db: db}
 }
@@ -95,4 +100,40 @@ func (r *cultureRecipeRepository) MaxVersion(ctx context.Context, vesselID uint,
 		return 0, fmt.Errorf("find latest culture recipe version: %w", err)
 	}
 	return maximum, nil
+}
+
+// ListPublishedInGroup returns every currently published version of one recipe
+// code on one vessel. excludeID (usually the version about to be published) is
+// skipped so callers can collect the versions that must be auto-obsoleted.
+func (r *cultureRecipeRepository) ListPublishedInGroup(
+	ctx context.Context, vesselID uint, recipeCode string, excludeID uint,
+) ([]model.CultureRecipe, error) {
+	var recipes []model.CultureRecipe
+	query := r.db.WithContext(ctx).
+		Where("vessel_id = ? AND recipe_code = ? AND recipe_state = ?", vesselID, recipeCode, "published")
+	if excludeID != 0 {
+		query = query.Where("id <> ?", excludeID)
+	}
+	if err := query.Order("version DESC").Find(&recipes).Error; err != nil {
+		return nil, fmt.Errorf("list published culture recipe versions: %w", err)
+	}
+	return recipes, nil
+}
+
+// BulkObsolete flips the given published versions to obsolete in one conditional
+// update. Rows that are no longer published are left untouched and the affected
+// row count is returned so callers can detect concurrent switches.
+func (r *cultureRecipeRepository) BulkObsolete(
+	ctx context.Context, ids []uint, updatedAt time.Time,
+) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.db.WithContext(ctx).Model(&model.CultureRecipe{}).
+		Where("id IN ? AND recipe_state = ?", ids, "published").
+		Updates(map[string]any{"recipe_state": "obsolete", "updated_at": updatedAt})
+	if result.Error != nil {
+		return 0, fmt.Errorf("bulk obsolete culture recipes: %w", result.Error)
+	}
+	return result.RowsAffected, nil
 }

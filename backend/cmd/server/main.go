@@ -47,8 +47,11 @@ func run(logger *slog.Logger) error {
 	analysisRepo := repository.NewDeviationAnalysisRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
 	userRepo := repository.NewUserRepository(db)
+	txManager := repository.NewTransactionManager(db)
 	vesselHandler := handler.NewFermentationVesselHandler(service.NewFermentationVesselService(vesselRepo, auditRepo))
-	recipeHandler := handler.NewCultureRecipeHandler(service.NewCultureRecipeService(recipeRepo, vesselRepo, auditRepo))
+	recipeHandler := handler.NewCultureRecipeHandler(service.NewCultureRecipeService(
+		recipeRepo, vesselRepo, seriesRepo, analysisRepo, auditRepo, txManager,
+	))
 	seriesHandler := handler.NewSensorSeriesHandler(service.NewSensorSeriesService(seriesRepo, recipeRepo, vesselRepo, auditRepo))
 	analysisHandler := handler.NewDeviationAnalysisHandler(service.NewDeviationAnalysisService(
 		analysisRepo, recipeRepo, seriesRepo, auditRepo, algorithm.NewEvaluator(),

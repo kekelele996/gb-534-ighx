@@ -1,13 +1,16 @@
 package handler
+
 import (
-	"net/http"
 	"fermentation-kinetics-deviation-analysis/backend/internal/constants"
 	"fermentation-kinetics-deviation-analysis/backend/internal/dto"
 	"fermentation-kinetics-deviation-analysis/backend/internal/service"
 	"fermentation-kinetics-deviation-analysis/backend/internal/util"
 	"github.com/gin-gonic/gin"
+	"net/http"
 )
+
 type CultureRecipeHandler struct{ service *service.CultureRecipeService }
+
 func NewCultureRecipeHandler(value *service.CultureRecipeService) *CultureRecipeHandler {
 	return &CultureRecipeHandler{service: value}
 }
@@ -69,6 +72,15 @@ func (h *CultureRecipeHandler) Transition(c *gin.Context) {
 		return
 	}
 	result, serviceErr := h.service.Transition(c.Request.Context(), id, request, actor)
+	respond(c, http.StatusOK, result, serviceErr)
+}
+func (h *CultureRecipeHandler) GatePreview(c *gin.Context) {
+	id, err := util.ParseUintParam(c, "id")
+	if err != nil {
+		util.Fail(c, err)
+		return
+	}
+	result, serviceErr := h.service.GatePreview(c.Request.Context(), id)
 	respond(c, http.StatusOK, result, serviceErr)
 }
 func (h *CultureRecipeHandler) Copy(c *gin.Context) {

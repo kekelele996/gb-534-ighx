@@ -1,13 +1,15 @@
 package repository
+
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
 	"fermentation-kinetics-deviation-analysis/backend/internal/dto"
 	"fermentation-kinetics-deviation-analysis/backend/internal/model"
+	"fmt"
 	"gorm.io/gorm"
+	"strings"
+	"time"
 )
+
 type DeviationAnalysisRepository interface {
 	Create(context.Context, *model.DeviationAnalysis) error
 	GetByID(context.Context, uint, bool) (model.DeviationAnalysis, error)
@@ -17,8 +19,10 @@ type DeviationAnalysisRepository interface {
 	Transition(context.Context, uint, string, string, map[string]any) (bool, error)
 	Complete(context.Context, uint, map[string]any) (bool, error)
 	SetReplayVerified(context.Context, uint, bool) error
+	ListOpenByRecipeIDs(context.Context, []uint, []string) ([]model.DeviationAnalysis, error)
 }
 type deviationAnalysisRepository struct{ db *gorm.DB }
+
 func NewDeviationAnalysisRepository(db *gorm.DB) DeviationAnalysisRepository {
 	return &deviationAnalysisRepository{db: db}
 }
@@ -115,10 +119,30 @@ func (r *deviationAnalysisRepository) SetReplayVerified(ctx context.Context, id 
 	}
 	return nil
 }
+
+// ListOpenByRecipeIDs returns not-yet-confirmed analyses (states in states)
+// that still reference one of the given recipe versions. Such pending reviews
+// block automatic obsoletion of the referenced published version.
+func (r *deviationAnalysisRepository) ListOpenByRecipeIDs(
+	ctx context.Context, recipeIDs []uint, states []string,
+) ([]model.DeviationAnalysis, error) {
+	if len(recipeIDs) == 0 || len(states) == 0 {
+		return nil, nil
+	}
+	var analyses []model.DeviationAnalysis
+	if err := r.db.WithContext(ctx).
+		Where("recipe_id IN ? AND analysis_state IN ?", recipeIDs, states).
+		Order("analyzed_at DESC, id DESC").Find(&analyses).Error; err != nil {
+		return nil, fmt.Errorf("list open analyses for recipes: %w", err)
+	}
+	return analyses, nil
+}
+
 type UserRepository interface {
 	FindByUsername(context.Context, string) (model.User, error)
 }
 type userRepository struct{ db *gorm.DB }
+
 func NewUserRepository(db *gorm.DB) UserRepository { return &userRepository{db: db} }
 func (r *userRepository) FindByUsername(ctx context.Context, username string) (model.User, error) {
 	var user model.User
@@ -127,6 +151,7 @@ func (r *userRepository) FindByUsername(ctx context.Context, username string) (m
 	}
 	return user, nil
 }
+
 type AuditQuery struct {
 	EntityType, RequestID, Action string
 	ActorID                       uint
@@ -138,6 +163,7 @@ type AuditRepository interface {
 	List(context.Context, AuditQuery) ([]model.AuditLog, int64, error)
 }
 type auditRepository struct{ db *gorm.DB }
+
 func NewAuditRepository(db *gorm.DB) AuditRepository { return &auditRepository{db: db} }
 func (r *auditRepository) Record(ctx context.Context, audit model.AuditLog) error {
 	if err := r.db.WithContext(ctx).Create(&audit).Error; err != nil {

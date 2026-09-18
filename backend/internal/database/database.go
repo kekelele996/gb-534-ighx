@@ -1,22 +1,24 @@
 package database
+
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"math"
-	"time"
 	"fermentation-kinetics-deviation-analysis/backend/internal/algorithm"
 	"fermentation-kinetics-deviation-analysis/backend/internal/config"
 	"fermentation-kinetics-deviation-analysis/backend/internal/constants"
 	"fermentation-kinetics-deviation-analysis/backend/internal/model"
 	"fermentation-kinetics-deviation-analysis/backend/internal/timeseries"
 	"fermentation-kinetics-deviation-analysis/backend/internal/util"
+	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"math"
+	"time"
 )
+
 func Open(cfg config.Config) (*gorm.DB, error) {
 	var dialector gorm.Dialector
 	switch cfg.DBDriver {
@@ -68,12 +70,30 @@ func migrate(db *gorm.DB) error {
 	); err != nil {
 		return fmt.Errorf("migrate database schema: %w", err)
 	}
+	if err := ensureSinglePublishedRecipeIndex(db); err != nil {
+		return err
+	}
 	return nil
 }
+
+// ensureSinglePublishedRecipeIndex adds a partial unique index so only one
+// published version can exist per vessel + recipe code, even under concurrent
+// publish requests. PostgreSQL and SQLite (used by tests/runtime smoke) both
+// support partial indexes.
+func ensureSinglePublishedRecipeIndex(db *gorm.DB) error {
+	const indexDDL = "CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_single_published " +
+		"ON culture_recipes (vessel_id, recipe_code) WHERE recipe_state = 'published'"
+	if err := db.Exec(indexDDL).Error; err != nil {
+		return fmt.Errorf("create single published recipe index: %w", err)
+	}
+	return nil
+}
+
 type seedAccount struct {
 	Username, DisplayName, Password string
 	Role                            constants.Role
 }
+
 func seed(db *gorm.DB) error {
 	accounts := []seedAccount{
 		{Username: "admin", DisplayName: "System Administrator", Password: "admin123", Role: constants.RoleAdmin},

@@ -1,10 +1,12 @@
 package dto
+
 import (
 	"encoding/json"
 	"fermentation-kinetics-deviation-analysis/backend/internal/model"
 	"strings"
 	"time"
 )
+
 type CreateCultureRecipeRequest struct {
 	VesselID             uint            `json:"vessel_id" binding:"required"`
 	RecipeCode           string          `json:"recipe_code" binding:"required,min=2,max=60"`
@@ -14,10 +16,12 @@ type CreateCultureRecipeRequest struct {
 	ReferenceCurvesJSON  json.RawMessage `json:"reference_curves_json" binding:"required"`
 	ToleranceProfileJSON json.RawMessage `json:"tolerance_profile_json" binding:"required"`
 }
+
 func (r *CreateCultureRecipeRequest) Normalize() {
 	r.RecipeCode = strings.ToUpper(strings.TrimSpace(r.RecipeCode))
 	r.Organism = strings.TrimSpace(r.Organism)
 }
+
 type UpdateCultureRecipeRequest struct {
 	Version              int              `json:"version" binding:"required,gte=1"`
 	Organism             *string          `json:"organism" binding:"omitempty,min=2,max=160"`
@@ -26,7 +30,9 @@ type UpdateCultureRecipeRequest struct {
 	ReferenceCurvesJSON  *json.RawMessage `json:"reference_curves_json"`
 	ToleranceProfileJSON *json.RawMessage `json:"tolerance_profile_json"`
 }
+
 func (r *UpdateCultureRecipeRequest) Normalize() { r.Organism = trimPointer(r.Organism) }
+
 type CultureRecipeTransitionRequest struct {
 	ToState string `json:"to_state" binding:"required,oneof=draft validated published obsolete"`
 	Version int    `json:"version" binding:"required,gte=1"`
@@ -64,6 +70,46 @@ type CultureRecipeListResponse struct {
 	Page  int                     `json:"page"`
 	Size  int                     `json:"page_size"`
 }
+
+// RecipeBlocker identifies one reference that keeps a published recipe version
+// in use. Kind is "ready_series" or "open_analysis".
+type RecipeBlocker struct {
+	Kind          string     `json:"kind"`
+	ID            uint       `json:"id"`
+	State         string     `json:"state"`
+	Label         string     `json:"label"`
+	VesselID      uint       `json:"vessel_id"`
+	RecipeID      uint       `json:"recipe_id"`
+	RecipeCode    string     `json:"recipe_code"`
+	RecipeVer     int        `json:"recipe_version"`
+	SeriesRunCode string     `json:"series_run_code,omitempty"`
+	Channel       string     `json:"channel,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	AnalyzedAt    *time.Time `json:"analyzed_at,omitempty"`
+	Initiator     string     `json:"initiator,omitempty"`
+	Reason        string     `json:"reason"`
+}
+
+// RecipePublishGate is returned in a 409 RECIPE_PUBLISH_BLOCKED error details
+// payload, describing why the version switch was rejected and which previously
+// published versions remain in force.
+type RecipePublishGate struct {
+	RecipeCode        string                  `json:"recipe_code"`
+	VesselID          uint                    `json:"vessel_id"`
+	TargetVersion     int                     `json:"target_version"`
+	PublishedVersions []CultureRecipeResponse `json:"published_versions"`
+	Blockers          []RecipeBlocker         `json:"blockers"`
+	ReadySeriesCount  int                     `json:"ready_series_count"`
+	OpenAnalysisCount int                     `json:"open_analysis_count"`
+}
+
+// CultureRecipeTransitionResult carries the switched recipe and, for a publish
+// that superseded earlier versions, the versions that were auto-obsoleted.
+type CultureRecipeTransitionResult struct {
+	Recipe            CultureRecipeResponse   `json:"recipe"`
+	ObsoletedVersions []CultureRecipeResponse `json:"obsoleted_versions,omitempty"`
+}
+
 func NewCultureRecipeResponse(recipe model.CultureRecipe) CultureRecipeResponse {
 	response := CultureRecipeResponse{
 		ID: recipe.ID, VesselID: recipe.VesselID, RecipeCode: recipe.RecipeCode, Version: recipe.Version,

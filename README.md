@@ -95,7 +95,8 @@ docker compose up -d
 | `POST` | `/api/v1/fermentation-vessels/:id/deactivate` | 停用罐体 |
 | `GET/POST` | `/api/v1/culture-recipes` | 配方列表/创建 |
 | `GET/PUT` | `/api/v1/culture-recipes/:id` | 配方详情/更新 |
-| `POST` | `/api/v1/culture-recipes/:id/transition` | 配方状态迁移 |
+| `POST` | `/api/v1/culture-recipes/:id/transition` | 配方状态迁移（发布带版本切换闸门） |
+| `GET` | `/api/v1/culture-recipes/:id/publish-gate` | 预检发布闸门与阻塞清单 |
 | `POST` | `/api/v1/culture-recipes/:id/copy` | 复制配方版本 |
 | `GET/POST` | `/api/v1/sensor-series` | 时序列表/导入 |
 | `GET` | `/api/v1/sensor-series/:id` | 时序详情 |
@@ -126,6 +127,8 @@ queued -> analyzing -> completed -> reviewed -> confirmed
             |              |          +-----> investigating -> reviewed
             +-> failed     +-----------------> voided
 ```
+
+配方版本切换闸门：发布一个新版本（`validated -> published`）时，系统在单个数据库事务内自动废止同一罐体、同一配方编号下其它已发布版本（审计动作 `auto_obsolete`），两个版本的状态一次生效，任一步失败全部回滚。发布前若旧已发布版本仍被**就绪时序**（`sensor_series.series_state = ready`）或**未确认分析**（`queued/analyzing/completed/reviewed/investigating`；`confirmed`、`failed`、`voided` 视为已终结不阻塞）引用，整次发布被拒绝并返回 `409 RECIPE_PUBLISH_BLOCKED`，错误体 `details` 给出阻塞清单（类型、ID、状态、所属版本、原因）。同罐体同编号的并发发布/废止经进程内分组闸门（`SwitchGate`）与部分唯一索引 `idx_recipe_single_published` 双重保证，只有一个能成功。`GET /culture-recipes/:id/publish-gate` 只读预检同一阻塞清单，配方页在刷新后仍可回读阻塞原因与各版本状态。
 
 算法按时间戳排序并去重，保留缺失率与长间隔证据；使用中位数和四分位距进行稳健缩放，再在 `lag/growth/production/harvest` 阶段边界内做确定性 DTW。结果包含持续时间、斜率、峰值时刻、曲线距离、多通道加权偏差、对齐点与原因规则命中。冻结输入和算法版本可重放，历史结果不会被覆盖。
 

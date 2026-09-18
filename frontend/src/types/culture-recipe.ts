@@ -33,3 +33,37 @@ export interface CreateRecipeInput {
   reference_curves_json: Record<string, CurvePoint[]>
   tolerance_profile_json: Record<string, ChannelTolerance>
 }
+
+export type RecipeBlockerKind = 'ready_series' | 'open_analysis'
+
+export interface RecipeBlocker {
+  kind: RecipeBlockerKind | string
+  id: number
+  state: string
+  label: string
+  vessel_id: number
+  recipe_id: number
+  recipe_code: string
+  recipe_version: number
+  series_run_code?: string
+  channel?: string
+  started_at?: string
+  analyzed_at?: string
+  initiator?: string
+  reason: string
+}
+
+export interface RecipePublishGate {
+  recipe_code: string
+  vessel_id: number
+  target_version: number
+  published_versions: CultureRecipe[]
+  blockers: RecipeBlocker[]
+  ready_series_count: number
+  open_analysis_count: number
+}
+
+export interface RecipeTransitionResult {
+  recipe: CultureRecipe
+  obsoleted_versions: CultureRecipe[]
+}

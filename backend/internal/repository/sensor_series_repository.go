@@ -1,21 +1,25 @@
 package repository
+
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
 	"fermentation-kinetics-deviation-analysis/backend/internal/dto"
 	"fermentation-kinetics-deviation-analysis/backend/internal/model"
+	"fmt"
 	"gorm.io/gorm"
+	"strings"
+	"time"
 )
+
 type SensorSeriesRepository interface {
 	Create(context.Context, *model.SensorSeries) error
 	GetByID(context.Context, uint, bool) (model.SensorSeries, error)
 	List(context.Context, dto.SensorSeriesQuery) ([]model.SensorSeries, int64, error)
 	Transition(context.Context, uint, string, string, string, string, time.Time) (bool, error)
 	FindByRunCode(context.Context, string) (model.SensorSeries, error)
+	ListReadyByRecipeIDs(context.Context, []uint) ([]model.SensorSeries, error)
 }
 type sensorSeriesRepository struct{ db *gorm.DB }
+
 func NewSensorSeriesRepository(db *gorm.DB) SensorSeriesRepository {
 	return &sensorSeriesRepository{db: db}
 }
@@ -91,4 +95,20 @@ func (r *sensorSeriesRepository) Transition(
 		return false, fmt.Errorf("transition sensor series %d: %w", id, result.Error)
 	}
 	return result.RowsAffected == 1, nil
+}
+
+// ListReadyByRecipeIDs returns ready sensor series that still reference any of
+// the given recipe versions. Ready series keep a published version in use, so
+// they block an automatic obsoletion during a new publish.
+func (r *sensorSeriesRepository) ListReadyByRecipeIDs(ctx context.Context, recipeIDs []uint) ([]model.SensorSeries, error) {
+	if len(recipeIDs) == 0 {
+		return nil, nil
+	}
+	var items []model.SensorSeries
+	if err := r.db.WithContext(ctx).
+		Where("recipe_id IN ? AND series_state = ?", recipeIDs, "ready").
+		Order("started_at DESC, id DESC").Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list ready sensor series for recipes: %w", err)
+	}
+	return items, nil
 }

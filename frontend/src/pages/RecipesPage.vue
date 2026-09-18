@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Copy, FileSearch, Plus, RefreshCw, Search } from 'lucide-vue-next'
+import { Copy, FileSearch, Plus, RefreshCw, Search, ShieldAlert } from 'lucide-vue-next'
 import AnalysisExplanationDrawer from '../components/common/AnalysisExplanationDrawer.vue'
 import AppShell from '../components/common/AppShell.vue'
 import PageHeader from '../components/common/PageHeader.vue'
 import PhaseBadge from '../components/common/PhaseBadge.vue'
+import RecipeGateDialog from '../components/common/RecipeGateDialog.vue'
 import StateBadge from '../components/common/StateBadge.vue'
 import { useAuth } from '../hooks/useAuth'
 import { useAnalysisStore } from '../stores/deviation-analysis'
 import { useRecipeStore } from '../stores/culture-recipe'
 import { useVesselStore } from '../stores/fermentation-vessel'
+import { ApiError } from '../api/client'
 import type { CreateRecipeInput, CultureRecipe, RecipeState } from '../types/culture-recipe'
 
 const recipes = useRecipeStore()
@@ -20,6 +22,7 @@ const { canWriteRecipes } = useAuth()
 const search = ref('')
 const dialog = ref(false)
 const drawer = ref(false)
+const gateDialog = ref(false)
 const saving = ref(false)
 const form = reactive({ vessel_id: undefined as number | undefined, recipe_code: '', organism: '', target_duration_h: 24 })
 
@@ -58,8 +61,44 @@ function nextState(state: RecipeState): RecipeState | null {
 async function advance(row: CultureRecipe) {
   const state = nextState(row.recipe_state)
   if (!state) return
-  try { await recipes.transition(row, state); ElMessage.success('配方状态已更新') }
-  catch (error) { ElMessage.error(error instanceof Error ? error.message : '状态更新失败') }
+  recipes.clearGate()
+  try {
+    const result = await recipes.transition(row, state)
+    if (state === 'published' && result.obsoleted_versions.length) {
+      ElMessage.success(`已发布 v${result.recipe.version}，旧版本已自动废止`)
+    } else {
+      ElMessage.success('配方状态已更新')
+    }
+  }
+  catch (error) {
+    if (error instanceof ApiError && error.code === 'RECIPE_PUBLISH_BLOCKED') {
+      gateDialog.value = true
+      return
+    }
+    ElMessage.error(error instanceof Error ? error.message : '状态更新失败')
+  }
+}
+async function retryAfterGate() {
+  gateDialog.value = false
+  await recipes.load(search.value)
+  ElMessage.info('列表已刷新，解除引用后可再次发布')
+}
+// gateSummary counts, for each validated version, the ready series and open
+// analyses that would block a publish, so the table can warn before the user
+// tries. It is derived from the analysis store and series loaded elsewhere;
+// the authoritative list comes from the gate preview endpoint on demand.
+async function openGatePreview(row: CultureRecipe) {
+  try {
+    await recipes.previewGate(row)
+    gateDialog.value = true
+  }
+  catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '读取阻塞清单失败')
+  }
+}
+const gateBlocked = computed(() => recipes.gate && recipes.gate.blockers.length > 0)
+async function refresh() {
+  await recipes.load(search.value)
 }
 async function copy(row: CultureRecipe) {
   try { await recipes.copy(row); ElMessage.success('已创建下一版本草稿') }
@@ -76,15 +115,26 @@ onMounted(() => Promise.all([recipes.load(), vessels.load(), analyses.load()]))
 <template>
   <AppShell>
     <div class="page-wrap">
-      <PageHeader eyebrow="VERSIONED PROCESS MODEL" title="配方版本" description="维护阶段边界、参考曲线与容差配置，发布后的版本保持只读。">
-        <el-tooltip content="刷新数据"><el-button circle aria-label="刷新" @click="recipes.load(search)"><RefreshCw :size="17" /></el-button></el-tooltip>
+      <PageHeader eyebrow="VERSIONED PROCESS MODEL" title="配方版本" description="维护阶段边界、参考曲线与容差配置；发布新版本会自动废止同罐体同编号的旧已发布版本，引用未解除时整次发布回滚。">
+        <el-tooltip content="刷新数据"><el-button circle aria-label="刷新" @click="refresh"><RefreshCw :size="17" /></el-button></el-tooltip>
         <el-button v-if="canWriteRecipes" type="primary" @click="dialog = true"><Plus :size="16" />新建配方</el-button>
       </PageHeader>
       <div class="toolbar">
-        <el-input v-model="search" clearable placeholder="搜索配方编号或菌种" @keyup.enter="recipes.load(search)"><template #prefix><Search :size="15" /></template></el-input>
+        <el-input v-model="search" clearable placeholder="搜索配方编号或菌种" @keyup.enter="refresh"><template #prefix><Search :size="15" /></template></el-input>
         <span>{{ recipes.items.length }} 个版本</span>
       </div>
       <el-alert v-if="recipes.error" :title="recipes.error" type="error" :closable="false" show-icon />
+      <el-alert
+        v-if="gateBlocked" type="warning" show-icon :closable="false" class="gate-inline"
+      >
+        <template #title>
+          <span>
+            <ShieldAlert :size="14" /> {{ recipes.gate?.recipe_code }} · v{{ recipes.gate?.target_version }}
+            的发布被拦截：{{ recipes.gate?.ready_series_count }} 条就绪时序、{{ recipes.gate?.open_analysis_count }} 个未确认分析仍在引用旧版本。
+          </span>
+        </template>
+        <el-button size="small" type="warning" plain @click="gateDialog = true">查看阻塞清单</el-button>
+      </el-alert>
       <el-skeleton v-if="recipes.loading" :rows="7" animated />
       <div v-else-if="!recipes.items.length" class="empty-state"><h2>暂无配方版本</h2><p>创建草稿并完成校验后即可发布。</p></div>
       <el-table v-else :data="recipes.items" row-key="id">
@@ -97,10 +147,13 @@ onMounted(() => Promise.all([recipes.load(), vessels.load(), analyses.load()]))
         </el-table-column>
         <el-table-column label="通道 / 容差" width="130"><template #default="{ row }"><span class="numeric">{{ Object.keys(row.reference_curves_json).length }}</span><small class="cell-note">参考通道</small></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><StateBadge :state="row.recipe_state" /></template></el-table-column>
-        <el-table-column label="操作" width="210" align="right">
+        <el-table-column label="操作" width="250" align="right">
           <template #default="{ row }">
             <el-tooltip content="查看相关分析解释"><el-button text circle aria-label="查看分析解释" @click="explain(row)"><FileSearch :size="16" /></el-button></el-tooltip>
             <el-tooltip v-if="canWriteRecipes" content="复制为下一版本"><el-button text circle aria-label="复制版本" @click="copy(row)"><Copy :size="16" /></el-button></el-tooltip>
+            <el-tooltip v-if="canWriteRecipes && row.recipe_state === 'validated'" content="预检发布闸门与阻塞清单">
+              <el-button text circle aria-label="预检发布闸门" @click="openGatePreview(row)"><ShieldAlert :size="16" /></el-button>
+            </el-tooltip>
             <el-button v-if="canWriteRecipes && nextState(row.recipe_state)" size="small" @click="advance(row)">
               {{ row.recipe_state === 'draft' ? '校验' : row.recipe_state === 'validated' ? '发布' : '废止' }}
             </el-button>
@@ -121,5 +174,6 @@ onMounted(() => Promise.all([recipes.load(), vessels.load(), analyses.load()]))
       <template #footer><el-button @click="dialog = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="!form.vessel_id" @click="submit">创建草稿</el-button></template>
     </el-dialog>
     <AnalysisExplanationDrawer v-model="drawer" :analysis="analyses.selected" />
+    <RecipeGateDialog v-model="gateDialog" :gate="recipes.gate" @retry="retryAfterGate" />
   </AppShell>
 </template>
