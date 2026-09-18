@@ -22,3 +22,16 @@ func (CultureRecipe) TableName() string { return "culture_recipes" }
 func (r CultureRecipe) Editable() bool {
 	return r.RecipeState == "draft" || r.RecipeState == "validated"
 }
+
+// RecipePublishGate is the version-switch gate row for one recipe code within
+// one vessel. One row per (vessel_id, recipe_code) serializes releases and
+// obsolescences: every switch transaction locks it and bumps its epoch, so
+// concurrent releases cannot both win.
+type RecipePublishGate struct {
+	VesselID   uint      `gorm:"primaryKey" json:"vessel_id"`
+	RecipeCode string    `gorm:"size:60;primaryKey" json:"recipe_code"`
+	Epoch      int       `gorm:"not null;default:0" json:"epoch"`
+	UpdatedAt  time.Time `gorm:"not null" json:"updated_at"`
+}
+
+func (RecipePublishGate) TableName() string { return "recipe_publish_gates" }

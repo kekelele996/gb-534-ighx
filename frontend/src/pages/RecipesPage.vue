@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Copy, FileSearch, Plus, RefreshCw, Search } from 'lucide-vue-next'
+import { Copy, FileSearch, Plus, RefreshCw, Search, ShieldAlert, ShieldCheck } from 'lucide-vue-next'
 import AnalysisExplanationDrawer from '../components/common/AnalysisExplanationDrawer.vue'
 import AppShell from '../components/common/AppShell.vue'
 import PageHeader from '../components/common/PageHeader.vue'
@@ -11,7 +11,8 @@ import { useAuth } from '../hooks/useAuth'
 import { useAnalysisStore } from '../stores/deviation-analysis'
 import { useRecipeStore } from '../stores/culture-recipe'
 import { useVesselStore } from '../stores/fermentation-vessel'
-import type { CreateRecipeInput, CultureRecipe, RecipeState } from '../types/culture-recipe'
+import { errorMessage } from '../api/client'
+import type { CreateRecipeInput, CultureRecipe, PublishBlocker, RecipeState } from '../types/culture-recipe'
 
 const recipes = useRecipeStore()
 const vessels = useVesselStore()
@@ -20,8 +21,15 @@ const { canWriteRecipes } = useAuth()
 const search = ref('')
 const dialog = ref(false)
 const drawer = ref(false)
+const blockDialog = ref(false)
 const saving = ref(false)
 const form = reactive({ vessel_id: undefined as number | undefined, recipe_code: '', organism: '', target_duration_h: 24 })
+
+const stateLabels: Record<string, string> = {
+  queued: '排队中', analyzing: '分析中', completed: '已完成', failed: '失败',
+  reviewed: '已复核', confirmed: '已确认', investigating: '调查中', voided: '已作废',
+  ready: '就绪',
+}
 
 function recipeInput(): CreateRecipeInput {
   const hours = Array.from({ length: 13 }, (_, index) => index * 2)
@@ -58,8 +66,13 @@ function nextState(state: RecipeState): RecipeState | null {
 async function advance(row: CultureRecipe) {
   const state = nextState(row.recipe_state)
   if (!state) return
-  try { await recipes.transition(row, state); ElMessage.success('配方状态已更新') }
-  catch (error) { ElMessage.error(error instanceof Error ? error.message : '状态更新失败') }
+  try {
+    await recipes.transition(row, state)
+    ElMessage.success(state === 'published' ? '新版本已发布，同组旧版本已自动废止' : '配方状态已更新')
+  } catch (error) {
+    if (recipes.lastBlockers) blockDialog.value = true
+    else ElMessage.error(errorMessage(error))
+  }
 }
 async function copy(row: CultureRecipe) {
   try { await recipes.copy(row); ElMessage.success('已创建下一版本草稿') }
@@ -70,13 +83,25 @@ function explain(row: CultureRecipe) {
   if (!analysis) { ElMessage.info('当前版本尚无分析解释'); return }
   analyses.selected = analysis; drawer.value = true
 }
+function gateBlockers(row: CultureRecipe): PublishBlocker[] {
+  return row.publish_gate?.blockers ?? []
+}
+function blockerText(blocker: PublishBlocker): string {
+  const version = `v${blocker.recipe_version}`
+  if (blocker.kind === 'ready_series') {
+    return `就绪时序 ${blocker.run_code || '#' + blocker.series_id} 仍引用 ${version}`
+  }
+  const state = blocker.state ? stateLabels[blocker.state] ?? blocker.state : '未确认'
+  return `分析 #${blocker.analysis_id} 处于「${state}」未确认${blocker.initiated_by_name ? `（发起人 ${blocker.initiated_by_name}）` : ''}，运行 ${blocker.run_code || '-'}`
+}
+const blockerDetail = computed(() => recipes.lastBlockers)
 onMounted(() => Promise.all([recipes.load(), vessels.load(), analyses.load()]))
 </script>
 
 <template>
   <AppShell>
     <div class="page-wrap">
-      <PageHeader eyebrow="VERSIONED PROCESS MODEL" title="配方版本" description="维护阶段边界、参考曲线与容差配置，发布后的版本保持只读。">
+      <PageHeader eyebrow="VERSIONED PROCESS MODEL" title="配方版本" description="维护阶段边界、参考曲线与容差配置；发布新版本时旧已发布版本自动废止，存在未了结引用时发布将被闸门拒绝。">
         <el-tooltip content="刷新数据"><el-button circle aria-label="刷新" @click="recipes.load(search)"><RefreshCw :size="17" /></el-button></el-tooltip>
         <el-button v-if="canWriteRecipes" type="primary" @click="dialog = true"><Plus :size="16" />新建配方</el-button>
       </PageHeader>
@@ -96,7 +121,33 @@ onMounted(() => Promise.all([recipes.load(), vessels.load(), analyses.load()]))
           <template #default="{ row }"><div class="phase-list"><PhaseBadge v-for="phase in row.phase_boundaries_json" :key="phase.phase" :phase="phase.phase" /><small>{{ row.target_duration_h }} h</small></div></template>
         </el-table-column>
         <el-table-column label="通道 / 容差" width="130"><template #default="{ row }"><span class="numeric">{{ Object.keys(row.reference_curves_json).length }}</span><small class="cell-note">参考通道</small></template></el-table-column>
-        <el-table-column label="状态" width="100"><template #default="{ row }"><StateBadge :state="row.recipe_state" /></template></el-table-column>
+        <el-table-column label="版本状态" min-width="200">
+          <template #default="{ row }">
+            <div class="gate-cell">
+              <StateBadge :state="row.recipe_state" />
+              <el-popover v-if="gateBlockers(row).length" placement="top" :width="340" trigger="hover">
+                <template #reference>
+                  <el-tag
+                    :type="row.recipe_state === 'validated' ? 'danger' : 'warning'"
+                    size="small" effect="plain" class="gate-tag"
+                  >
+                    <ShieldAlert v-if="row.recipe_state === 'validated'" :size="13" />
+                    <ShieldCheck v-else :size="13" />
+                    {{ gateBlockers(row).length }} 项{{ row.recipe_state === 'validated' ? '阻塞' : '在保引用' }}
+                  </el-tag>
+                </template>
+                <div class="gate-popover">
+                  <strong>{{ row.recipe_state === 'validated' ? '发布将被拒绝：' : '该版本仍被引用保护：' }}</strong>
+                  <ul>
+                    <li v-for="blocker in gateBlockers(row)" :key="`${blocker.kind}-${blocker.series_id ?? blocker.analysis_id}`">
+                      {{ blockerText(blocker) }}
+                    </li>
+                  </ul>
+                </div>
+              </el-popover>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="210" align="right">
           <template #default="{ row }">
             <el-tooltip content="查看相关分析解释"><el-button text circle aria-label="查看分析解释" @click="explain(row)"><FileSearch :size="16" /></el-button></el-tooltip>
@@ -119,6 +170,27 @@ onMounted(() => Promise.all([recipes.load(), vessels.load(), analyses.load()]))
         <div class="configuration-note">新版本将以 0–4 / 4–10 / 10–20 / 20–24 h 的四阶段参考模板建立，可在发布前经 API 编辑。</div>
       </el-form>
       <template #footer><el-button @click="dialog = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="!form.vessel_id" @click="submit">创建草稿</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="blockDialog" title="发布被版本闸门拒绝" width="min(620px, 94vw)">
+      <div v-if="blockerDetail" class="block-dialog">
+        <el-alert
+          type="error" :closable="false" show-icon
+          :title="`配方 ${blockerDetail.recipe_code} 的新版本未能发布，旧版本状态保持不变；请先了结以下 ${blockerDetail.blockers.length} 项引用后重试。`"
+        />
+        <el-table :data="blockerDetail.blockers" size="small" class="block-table">
+          <el-table-column label="类型" width="110">
+            <template #default="{ row }">
+              <el-tag :type="row.kind === 'ready_series' ? 'danger' : 'warning'" size="small">
+                {{ row.kind === 'ready_series' ? '就绪时序' : '未确认分析' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="版本" width="70"><template #default="{ row }">v{{ row.recipe_version }}</template></el-table-column>
+          <el-table-column label="阻塞原因" min-width="320"><template #default="{ row }">{{ blockerText(row) }}</template></el-table-column>
+        </el-table>
+        <p class="block-hint">刷新后列表回读一致：新版本仍为「已校验」，旧版本仍为「已发布」。</p>
+      </div>
+      <template #footer><el-button type="primary" @click="blockDialog = false">我知道了</el-button></template>
     </el-dialog>
     <AnalysisExplanationDrawer v-model="drawer" :analysis="analyses.selected" />
   </AppShell>

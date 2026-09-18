@@ -9,6 +9,7 @@ export class ApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly requestId: string,
+    public readonly data?: unknown,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -33,6 +34,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       response.status, body?.code ?? 'HTTP_ERROR',
       body?.message ?? `请求失败（HTTP ${response.status}）`,
       body?.request_id ?? response.headers.get('X-Request-ID') ?? '',
+      body?.data,
     )
   }
   return (payload as ApiEnvelope<T>).data

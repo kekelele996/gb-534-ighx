@@ -9,6 +9,7 @@ export interface ApiErrorBody {
   code?: string
   message?: string
   request_id?: string
+  data?: unknown
 }
 
 export interface Page<T> {

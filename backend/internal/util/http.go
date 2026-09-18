@@ -23,6 +23,7 @@ const (
 	CodeIdempotency      ErrorCode = "IDEMPOTENCY_KEY_REQUIRED"
 	CodeStateTransition  ErrorCode = "INVALID_STATE_TRANSITION"
 	CodeReviewerConflict ErrorCode = "REVIEWER_AUTHOR_CONFLICT"
+	CodePublishBlocked   ErrorCode = "PUBLISH_BLOCKED"
 )
 type AppError struct {
 	Status  int
@@ -58,14 +59,25 @@ type Envelope struct {
 func Success(c *gin.Context, status int, data any) {
 	c.JSON(status, Envelope{Code: "OK", Message: "success", Data: data, RequestID: RequestID(c)})
 }
+// DetailCarrier lets domain errors attach structured data (for example the
+// publish-gate blocker list) to the standard error envelope.
+type DetailCarrier interface {
+	ErrorDetails() any
+}
+
 func Fail(c *gin.Context, err error) {
 	var appErr *AppError
 	if !errors.As(err, &appErr) {
 		appErr = WrapError(http.StatusInternalServerError, CodeInternal, "an unexpected error occurred", err)
 	}
+	var details any
+	var carrier DetailCarrier
+	if errors.As(err, &carrier) {
+		details = carrier.ErrorDetails()
+	}
 	c.Error(appErr) //nolint:errcheck
 	c.AbortWithStatusJSON(appErr.Status, Envelope{
-		Code: string(appErr.Code), Message: appErr.Message, RequestID: RequestID(c),
+		Code: string(appErr.Code), Message: appErr.Message, Data: details, RequestID: RequestID(c),
 	})
 }
 func RequestID(c *gin.Context) string {

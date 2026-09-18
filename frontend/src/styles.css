@@ -330,3 +330,12 @@ code { font-family: "SFMono-Regular", Consolas, monospace; }
   .signal-board { gap: 6px; }
   .login-panel { padding: 28px 20px; }
 }
+
+/* Recipe version-switch gate */
+.gate-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gate-tag { display: inline-flex; align-items: center; gap: 3px; }
+.gate-popover { font-size: .72rem; color: var(--ink); display: grid; gap: 6px; }
+.gate-popover ul { margin: 0; padding-left: 16px; display: grid; gap: 4px; color: var(--muted); }
+.block-dialog { display: grid; gap: 12px; margin-top: 8px; }
+.block-table .el-table__cell { padding: 6px 0; }
+.block-hint { margin: 0; color: var(--muted); font-size: .68rem; }

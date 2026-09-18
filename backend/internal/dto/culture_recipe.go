@@ -57,6 +57,41 @@ type CultureRecipeResponse struct {
 	CreatedByName        string                      `json:"created_by_name"`
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
+	PublishGate          *PublishGate                `json:"publish_gate,omitempty"`
+}
+
+// PublishBlocker describes one reference that keeps an older published version
+// alive and therefore blocks automatic obsolescence during a new release.
+type PublishBlocker struct {
+	Kind            string    `json:"kind"`
+	SeriesID        uint      `json:"series_id,omitempty"`
+	AnalysisID      uint      `json:"analysis_id,omitempty"`
+	RecipeID        uint      `json:"recipe_id"`
+	RecipeVersion   int       `json:"recipe_version"`
+	RunCode         string    `json:"run_code,omitempty"`
+	Channel         string    `json:"channel,omitempty"`
+	State           string    `json:"state,omitempty"`
+	InitiatedByName string    `json:"initiated_by_name,omitempty"`
+	OccurredAt      time.Time `json:"occurred_at"`
+	Reason          string    `json:"reason"`
+}
+
+// PublishGate is the read-model gate projection attached to a recipe version:
+// for validated versions it previews why a release would be rejected, for
+// published versions it lists the live references that currently protect it.
+type PublishGate struct {
+	Blocked  bool             `json:"blocked"`
+	Blockers []PublishBlocker `json:"blockers"`
+}
+
+// PublishBlockedPayload is the structured data returned with HTTP 409 when a
+// release is rejected. ObsoleteVersions lists the predecessors that stayed
+// published because the whole release was rolled back.
+type PublishBlockedPayload struct {
+	BlockedRecipeID  uint             `json:"blocked_recipe_id"`
+	RecipeCode       string           `json:"recipe_code"`
+	ObsoleteVersions []int            `json:"obsolete_versions"`
+	Blockers         []PublishBlocker `json:"blockers"`
 }
 type CultureRecipeListResponse struct {
 	Items []CultureRecipeResponse `json:"items"`

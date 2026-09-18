@@ -65,8 +65,17 @@ func migrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&model.User{}, &model.FermentationVessel{}, &model.CultureRecipe{},
 		&model.SensorSeries{}, &model.DeviationAnalysis{}, &model.AuditLog{},
+		&model.RecipePublishGate{},
 	); err != nil {
 		return fmt.Errorf("migrate database schema: %w", err)
+	}
+	// Hard database invariant behind the version-switch gate: at most one
+	// published version may exist for a vessel + recipe-code group. Valid DDL
+	// on PostgreSQL and SQLite (used by unit tests and runtime smoke).
+	indexDDL := "CREATE UNIQUE INDEX IF NOT EXISTS idx_culture_recipes_one_published " +
+		"ON culture_recipes (vessel_id, recipe_code) WHERE recipe_state = 'published'"
+	if err := db.Exec(indexDDL).Error; err != nil {
+		return fmt.Errorf("create single-published partial unique index: %w", err)
 	}
 	return nil
 }
